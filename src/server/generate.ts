@@ -134,12 +134,14 @@ export async function generateAnswers(profile: Profile, req: GenerateRequest, ll
     aiQueue.push({ field: f, sections: c.type === 'open' ? c.sections : [c.section] });
   }
 
-  for (let i = 0; i < aiQueue.length; i += 20) {
-    const batch = aiQueue.slice(i, i + 20);
+  // Batches run in parallel to keep total latency within the function time limit.
+  const batches: typeof aiQueue[] = [];
+  for (let i = 0; i < aiQueue.length; i += 12) batches.push(aiQueue.slice(i, i + 12));
+  await Promise.all(batches.map(async (batch) => {
     const context = buildContext(profile, batch.flatMap((b) => b.sections));
     if (!Object.keys(context).length) {
       batch.forEach(({ field }) => answers.set(field.id, { id: field.id, status: 'needs_info', value: null, confidence: 0, reason: 'Your profile has no information for this yet', sources: [], method: 'ai' }));
-      continue;
+      return;
     }
     const regen = req.regenerate
       ? `\n\nREGENERATE: write a noticeably different version than the previous answer.${req.regenerate.previous ? `\nPrevious answer: """${clip(req.regenerate.previous, 3000)}"""` : ''}${req.regenerate.instruction ? `\nUser's instruction for the new version: """${clip(req.regenerate.instruction, 300)}"""` : ''}`
@@ -151,7 +153,7 @@ export async function generateAnswers(profile: Profile, req: GenerateRequest, ll
     const out = (await llm.completeJSON({ system: SYSTEM, user, temperature: req.regenerate ? 0.8 : 0.3 })) as any;
     const byId = new Map<string, any>((Array.isArray(out?.answers) ? out.answers : []).map((a: any) => [String(a?.id), a]));
     for (const { field } of batch) answers.set(field.id, validateAnswer(field, byId.get(field.id)));
-  }
+  }));
 
   return { answers: fields.map((f) => answers.get(f.id)!).filter(Boolean), aiFieldCount: aiQueue.length };
 }

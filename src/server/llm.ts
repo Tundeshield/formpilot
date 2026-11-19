@@ -6,11 +6,10 @@ export interface LLM {
 
 function parseJSON(text: string): unknown {
   const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  try { return JSON.parse(t); } catch {
-    const m = t.match(/\{[\s\S]*\}/);
-    if (m) return JSON.parse(m[0]);
-    throw new HttpError(502, 'The AI returned an unreadable response. Try again.');
-  }
+  try { return JSON.parse(t); } catch { /* try the outermost object */ }
+  const m = t.match(/\{[\s\S]*\}/);
+  try { if (m) return JSON.parse(m[0]); } catch { /* fall through */ }
+  throw new HttpError(502, 'The AI returned an unreadable response. Try again.');
 }
 
 async function post(url: string, headers: Record<string, string>, body: unknown) {
@@ -38,7 +37,7 @@ async function post(url: string, headers: Record<string, string>, body: unknown)
 }
 
 const openai: LLM = {
-  async completeJSON({ system, user, temperature = 0.3, maxTokens = 3000 }) {
+  async completeJSON({ system, user, temperature = 0.3, maxTokens = 8000 }) {
     const data = await post('https://api.openai.com/v1/chat/completions', { authorization: `Bearer ${env('OPENAI_API_KEY')}` }, {
       model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
       temperature, max_tokens: maxTokens,
@@ -51,12 +50,18 @@ const openai: LLM = {
 
 const anthropic: LLM = {
   // Current Claude models don't accept `temperature`; regenerate variety comes from the prompt instead.
-  async completeJSON({ system, user, maxTokens = 3000 }) {
+  // Output is forced through a tool call, so the API returns a parsed JSON object (no free-text JSON to break).
+  async completeJSON({ system, user, maxTokens = 8000 }) {
     const data = await post('https://api.anthropic.com/v1/messages', { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' }, {
       model: process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5',
       max_tokens: maxTokens, system,
-      messages: [{ role: 'user', content: user + '\n\nRespond with a single JSON object only.' }],
+      tools: [{ name: 'respond', description: 'Return the result as the JSON object described in the instructions.', input_schema: { type: 'object', additionalProperties: true } }],
+      tool_choice: { type: 'tool', name: 'respond' },
+      messages: [{ role: 'user', content: user }],
     });
+    if (data.stop_reason === 'max_tokens') throw new HttpError(502, 'The AI response was too long. Try fewer fields or rescan.');
+    const block = (data.content || []).find((c: any) => c.type === 'tool_use');
+    if (block?.input && typeof block.input === 'object') return block.input;
     return parseJSON((data.content || []).map((c: any) => c.text || '').join(''));
   },
 };
