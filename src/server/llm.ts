@@ -19,8 +19,16 @@ async function post(url: string, headers: Record<string, string>, body: unknown)
   try {
     const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctrl.signal });
     if (!r.ok) {
-      console.error('LLM error', r.status, (await r.text()).slice(0, 500));
-      throw new HttpError(502, r.status === 429 ? 'AI provider is rate-limiting requests. Try again shortly.' : 'AI provider error. Try again.');
+      const body = await r.text();
+      console.error('LLM error', r.status, body.slice(0, 500));
+      let detail = '';
+      try { const j = JSON.parse(body); detail = String(j?.error?.message || j?.message || '').slice(0, 200); } catch { /* not JSON */ }
+      const hint = /credit balance|billing|quota/i.test(detail) ? 'The AI account has no API credits left. Top up billing for the API key.'
+        : r.status === 401 || r.status === 403 ? 'The AI API key was rejected. Check the key in Netlify.'
+        : r.status === 404 ? `AI model not found. ${detail}`
+        : r.status === 429 ? 'AI provider is rate-limiting requests. Try again shortly.'
+        : `AI provider error (${r.status})${detail ? `: ${detail}` : ''}`;
+      throw new HttpError(502, hint);
     }
     return r.json() as Promise<any>;
   } catch (e) {
