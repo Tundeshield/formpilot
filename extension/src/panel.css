@@ -1,0 +1,50 @@
+:root { font-size: 14px; } :root[data-text='large'] { font-size: 16px; }
+body { background: var(--bg-subtle); min-width: 300px; }
+.page { min-height: 100vh; display: flex; flex-direction: column; }
+.hdr { position: sticky; top: 0; z-index: 5; height: 48px; padding: 0 12px 0 14px; display: flex; align-items: center; justify-content: space-between; background: var(--bg); border-bottom: 1px solid var(--border); }
+.logo { font-size: 0.95rem; } .logo-mark { width: 20px; height: 20px; border-radius: 6px; }
+.pad { padding: 16px 14px; } .pad-x { padding: 0 14px; }
+.center { min-height: 100vh; display: grid; place-items: center; }
+.center-col { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 60px; }
+.center-text { text-align: center; }
+.empty { text-align: center; padding-top: 44px; gap: 12px; }
+.hero-icon { width: 44px; height: 44px; margin: 0 auto 4px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); display: grid; place-items: center; font-size: 1.4rem; font-weight: 700; }
+.small { font-size: 0.82rem; }
+.stack-sm { display: flex; flex-direction: column; gap: 4px; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.page-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 12px; font-size: 0.88rem; }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 12px 14px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.stats > div { display: flex; flex-direction: column; align-items: center; padding: 10px 4px; }
+.stats > div + div { border-left: 1px solid var(--border); }
+.stats strong { font-size: 1.25rem; font-weight: 650; letter-spacing: -0.02em; }
+.stats span { font-size: 0.74rem; color: var(--text-3); }
+.c-green { color: var(--green); } .c-red { color: var(--red); }
+.skipnote { font-size: 0.78rem; margin: 2px 0 6px; }
+
+.list { padding: 4px 14px 150px; display: flex; flex-direction: column; gap: 8px; }
+.fcard { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 12px; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s, opacity 0.15s; }
+.fcard.is-approved { border-color: #c7c7f3; box-shadow: 0 0 0 1px #e1e1fa; }
+.fcard.is-skipped { opacity: 0.6; background: var(--bg-subtle); }
+.fcard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.flabel { border: 0; background: none; padding: 0; text-align: left; font: inherit; font-size: 0.86rem; font-weight: 600; color: var(--text); cursor: pointer; line-height: 1.35; }
+.flabel:hover { color: var(--accent-text); }
+.req { color: var(--red); margin-left: 2px; }
+.answer { font-size: 0.9rem; color: var(--text); background: var(--bg-subtle); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 9px; cursor: text; white-space: pre-wrap; word-break: break-word; }
+.answer:hover { border-color: var(--border); }
+.answer.long { max-height: 190px; overflow: auto; line-height: 1.55; }
+.reason { font-size: 0.8rem; color: var(--red); }
+.fcard-actions { display: flex; align-items: center; gap: 4px; }
+.fcard-actions .push { margin-left: auto; }
+.btn-approved { background: var(--accent-soft); border-color: #cfcff5; color: var(--accent-text); }
+.btn-icon { width: 30px; padding: 0; font-size: 1.1rem; }
+.regen { gap: 6px; }
+
+.footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 14px 12px; background: rgba(255,255,255,0.94); backdrop-filter: blur(8px); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.footer-msg { font-size: 0.8rem; }
+
+.menu-wrap { position: relative; }
+.menu { position: absolute; right: 0; top: 34px; width: 230px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px; z-index: 10; }
+.menu-item { display: block; width: 100%; text-align: left; border: 0; background: none; font: inherit; font-size: 0.86rem; padding: 7px 9px; border-radius: 6px; color: var(--text); cursor: pointer; }
+.menu-item:hover { background: var(--bg-muted); text-decoration: none; }
+.menu-label { font-size: 0.76rem; color: var(--text-3); padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; }
