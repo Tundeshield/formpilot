@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { signOut } from 'firebase/auth';
+import { auth } from '../lib/firebase';
 import { useAuth } from '../lib/auth';
 
 export function Logo() {
@@ -15,7 +16,7 @@ export function Logo() {
 }
 
 export function Layout({ children }: { children: ReactNode }) {
-  const { session } = useAuth();
+  const { user } = useAuth();
   return (
     <div className="app">
       <header className="topbar">
@@ -28,8 +29,8 @@ export function Layout({ children }: { children: ReactNode }) {
             <NavLink to="/account">Account</NavLink>
           </nav>
           <div className="row">
-            <span className="subtle hide-sm">{session?.user.email}</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => supabase.auth.signOut()}>Sign out</button>
+            <span className="subtle hide-sm">{user?.email}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => signOut(auth)}>Sign out</button>
           </div>
         </div>
       </header>

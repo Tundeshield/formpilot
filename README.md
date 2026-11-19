@@ -11,14 +11,14 @@ extension/      Chrome MV3 extension (side panel UI)
 src/shared/     Types, field classifier, page scanner + filler (injected into pages), design tokens
 src/server/     Backend logic: auth, LLM providers, answer engine, CV extraction
 netlify/functions/  HTTP API: /api/config, /api/generate, /api/extract, /api/facts, /api/usage
-supabase/schema.sql Tables, row-level security, storage bucket + policies
+firebase/        Firestore + Storage security rules (firebase.json deploys them)
 tests/          Scanner, classifier, answer pipeline and filler tests (run against the demo form)
 ```
 
 ## How it works
 
 1. **Scan.** When you click **Scan page**, the side panel injects `scanPage()` into the active tab. It collects inputs, textareas, selects, radio groups and checkboxes along with their labels, help text and options. Passwords, file inputs, payment and ID fields, captchas and hidden or honeypot fields are never read.
-2. **Answer.** `/api/generate` verifies your session and loads your profile with *your* token, so row-level security applies. Then:
+2. **Answer.** `/api/generate` verifies your Firebase ID token and reads your profile from Firestore with *your* token, so the security rules apply even on the server. Then:
    - Simple fields (name, email, phone, location, links, current title or company) are filled **straight from the profile**, without calling the AI.
    - Consent boxes, legal declarations, marketing opt-ins and demographic self-ID questions are always left for **you** to answer.
    - Open questions go to the LLM with **only the relevant profile sections**. The LLM never receives your email, phone or street address. Page text is wrapped as untrusted input, and the model has to answer `needs_info` rather than guess.
@@ -28,19 +28,20 @@ tests/          Scanner, classifier, answer pipeline and filler tests (run again
 
 ## Setup (about 15 minutes)
 
-### 1. Supabase
-1. Create a project at supabase.com.
-2. In the SQL editor, run `supabase/schema.sql`.
-3. Under Authentication → URL configuration, set **Site URL** to your Netlify URL.
-4. Copy the **Project URL** and the **anon public key** from Settings → API.
+### 1. Firebase
+1. In the Firebase console, create a project, then add a **Web app**. Copy its config values.
+2. Under **Authentication → Sign-in method**, enable **Email/Password**. Under **Settings → Authorized domains**, add your Netlify domain.
+3. Create a **Firestore** database and a **Storage** bucket (production mode).
+4. Deploy the security rules with `firebase deploy --only firestore:rules,storage`. Or paste `firebase/firestore.rules` and `firebase/storage.rules` into the Rules tabs in the console.
+
+No service-account key is needed. The functions verify ID tokens against Google's public keys and call Firestore as the signed-in user.
 
 ### 2. Netlify
-Connect this repo as a new site. The build settings come from `netlify.toml`. Add these environment variables:
+Connect the GitHub repo as a new site. The build settings come from `netlify.toml`. Add these environment variables:
 
 | Variable | Value |
 |---|---|
-| `VITE_SUPABASE_URL`, `SUPABASE_URL` | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY`, `SUPABASE_ANON_KEY` | Supabase anon key |
+| `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_APP_ID` | From the Firebase web app config (public values) |
 | `OPENAI_API_KEY` | Your key. Server-only: it is never shipped to the browser or the extension |
 | `OPENAI_MODEL` | Optional, default `gpt-4.1-mini` |
 | `LLM_PROVIDER` | Optional: `openai` (default) or `anthropic` (then set `ANTHROPIC_API_KEY`) |
@@ -57,13 +58,13 @@ cp .env.example .env    # fill in values
 npm install
 npx netlify dev         # web + functions on http://localhost:8888
 npm run build:ext       # extension → dist/extension (defaults to localhost:8888)
-npm test                # 19 tests
+npm test                # 21 tests
 ```
 
 ## Security model
 - AI keys exist only in Netlify Functions.
-- The extension holds only the public Supabase anon key, which it fetches from `/api/config`, and the user's session, stored in `chrome.storage.local`.
-- Every table and the storage bucket are protected by RLS (`auth.uid()`). The API calls Supabase *as the user*, never with a service role key.
+- The extension holds only the public Firebase web config, which it fetches from `/api/config`, and the user's Firebase session. It uses Firebase's `web-extension` Auth build, which loads no remote scripts, as MV3 requires.
+- All data lives under `users/{uid}` in Firestore and Storage, and the rules allow access only when `request.auth.uid == uid`. The API calls Firestore *as the user* via REST, never with admin credentials. Usage counters can only increase.
 - The extension never downloads your profile. The server sends the LLM only the sections a given question needs.
 - Host access is an *optional* permission. Chrome asks for it the first time you scan, and pages are read only when you click Scan.
 - Webpage content is treated as untrusted. Strings are capped, the content is delimited in the prompt, the model is told to ignore any instructions in it, and the output is validated. The demo page includes a prompt-injection line to show this.
@@ -75,3 +76,4 @@ npm test                # 19 tests
 - **Scanned or image-only PDFs** have no text layer and would need OCR. PDF, DOCX and TXT files with real text all work.
 - The extension is installed unpacked. A Chrome Web Store listing needs a store account and review.
 - There is no billing. Usage is metered against a monthly limit and shown on the Account page.
+- Email verification is sent at sign-up but isn't required to use the app.

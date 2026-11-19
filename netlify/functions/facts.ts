@@ -6,17 +6,15 @@ import type { Profile } from '../../src/shared/types';
 // their profile, without the extension ever downloading the full profile.
 export default handler(async (req) => {
   if (req.method !== 'POST') throw new HttpError(405, 'Method not allowed');
-  const { user, db } = await authenticate(req);
+  const { uid, db } = await authenticate(req);
   const { label, value } = await readJson<{ label: string; value: string }>(req, 20_000);
   const l = String(label || '').trim().slice(0, 200), v = String(value || '').trim().slice(0, 4000);
   if (!l || !v) throw new HttpError(400, 'Label and value are required');
 
-  const { data } = await db.from('profiles').select('data').eq('id', user.id).maybeSingle();
-  const profile = (data?.data || {}) as Profile;
+  const profile = ((await db.get(`users/${uid}`))?.profile || {}) as Profile;
   const facts = (profile.facts || []).filter((f) => f.label.toLowerCase() !== l.toLowerCase());
   facts.push({ id: Math.random().toString(36).slice(2, 10), label: l, value: v });
-  const { error } = await db.from('profiles').upsert({ id: user.id, data: { ...profile, facts }, updated_at: new Date().toISOString() });
-  if (error) throw new HttpError(500, 'Could not save to your profile');
+  await db.patch(`users/${uid}`, { profile: { ...profile, facts }, updatedAt: new Date() });
   return json({ ok: true });
 });
 

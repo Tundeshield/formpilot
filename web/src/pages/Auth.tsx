@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../lib/firebase';
 import { Logo } from '../components/Layout';
 
 export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
@@ -14,21 +15,20 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setError(''); setInfo('');
-    if (signup) {
-      const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
-      if (error) setError(error.message);
-      else if (!data.session) setInfo('Check your inbox to confirm your email, then sign in.');
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) setError(error.message);
-    }
+    try {
+      if (signup) {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        sendEmailVerification(cred.user).catch(() => {});
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (e) { setError(friendly(e)); }
     setBusy(false);
   }
 
   async function reset() {
     if (!email) return setError('Enter your email first.');
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/account' });
-    if (error) setError(error.message); else setInfo('Password reset email sent.');
+    try { await sendPasswordResetEmail(auth, email); setInfo('Password reset email sent.'); } catch (e) { setError(friendly(e)); }
   }
 
   return (
@@ -57,4 +57,19 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
       </div>
     </div>
   );
+}
+
+export function friendly(e: unknown): string {
+  const code = (e as { code?: string })?.code || '';
+  const map: Record<string, string> = {
+    'auth/invalid-credential': 'Email or password is incorrect.',
+    'auth/wrong-password': 'Email or password is incorrect.',
+    'auth/user-not-found': 'Email or password is incorrect.',
+    'auth/email-already-in-use': 'An account with this email already exists.',
+    'auth/weak-password': 'Use at least 8 characters.',
+    'auth/invalid-email': 'Enter a valid email address.',
+    'auth/too-many-requests': 'Too many attempts. Try again in a few minutes.',
+    'auth/requires-recent-login': 'Please sign out and in again, then retry.',
+  };
+  return map[code] || (e instanceof Error ? e.message.replace(/^Firebase: /, '') : 'Something went wrong');
 }

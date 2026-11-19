@@ -1,18 +1,20 @@
 import type { Profile } from '../../../src/shared/types';
-import { supabase } from './supabase';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from './firebase';
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
 
 export async function loadProfile(userId: string): Promise<Profile> {
-  const { data, error } = await supabase.from('profiles').select('data').eq('id', userId).maybeSingle();
-  if (error) throw error;
-  return (data?.data || {}) as Profile;
+  const snap = await getDoc(doc(db, 'users', userId));
+  const p = (snap.data()?.profile || {}) as Profile;
+  // First visit: start the profile with the account email.
+  if (!snap.exists() && auth.currentUser?.email) p.contact = { email: auth.currentUser.email };
+  return p;
 }
 
 export async function saveProfile(userId: string, profile: Profile) {
   const clean = JSON.parse(JSON.stringify(profile, (_k, v) => (v === '' ? undefined : v)));
-  const { error } = await supabase.from('profiles').upsert({ id: userId, data: clean, updated_at: new Date().toISOString() });
-  if (error) throw error;
+  await setDoc(doc(db, 'users', userId), { profile: clean, updatedAt: serverTimestamp() }, { merge: true });
 }
 
 /** Completeness heuristic used for the dashboard header. */

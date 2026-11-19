@@ -1,18 +1,14 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import { onAuthStateChanged, type User } from 'firebase/auth';
+import { auth, configured } from './firebase';
 
-const Ctx = createContext<{ session: Session | null; loading: boolean }>({ session: null, loading: true });
+const Ctx = createContext<{ user: User | null; loading: boolean }>({ user: null, loading: true });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false); });
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => data.subscription.unsubscribe();
-  }, []);
-  return <Ctx.Provider value={{ session, loading }}>{children}</Ctx.Provider>;
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(configured);
+  useEffect(() => (configured ? onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); }) : undefined), []);
+  return <Ctx.Provider value={{ user, loading }}>{children}</Ctx.Provider>;
 }
 
 export const useAuth = () => useContext(Ctx);

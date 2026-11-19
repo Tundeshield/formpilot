@@ -1,8 +1,7 @@
-import { supabase } from './supabase';
+import { auth } from './firebase';
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = await auth.currentUser?.getIdToken();
   const r = await fetch(path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },

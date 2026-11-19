@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+import { Firestore, verifyIdToken } from './firestore';
 
 export const CORS: Record<string, string> = {
   // The extension calls from a chrome-extension:// origin. Auth is a bearer token
@@ -26,17 +26,12 @@ export function env(name: string, fallback?: string): string {
   return v;
 }
 
-/** Verifies the Supabase JWT and returns a client that acts *as that user*, so RLS applies. */
-export async function authenticate(req: Request): Promise<{ user: User; db: SupabaseClient }> {
+/** Verifies the Firebase ID token and returns a Firestore client that acts *as that user*, so security rules apply. */
+export async function authenticate(req: Request): Promise<{ uid: string; db: Firestore }> {
   const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (!token) throw new HttpError(401, 'Not signed in');
-  const db = createClient(env('SUPABASE_URL', process.env.VITE_SUPABASE_URL), env('SUPABASE_ANON_KEY', process.env.VITE_SUPABASE_ANON_KEY), {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data, error } = await db.auth.getUser(token);
-  if (error || !data.user) throw new HttpError(401, 'Session expired — please sign in again');
-  return { user: data.user, db };
+  const { uid } = await verifyIdToken(token);
+  return { uid, db: new Firestore(token) };
 }
 
 export async function readJson<T>(req: Request, maxBytes = 400_000): Promise<T> {
@@ -58,15 +53,11 @@ export function handler(fn: (req: Request) => Promise<Response>) {
   };
 }
 
-export function monthStart(): string {
-  const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString();
-}
+export const monthKey = () => new Date().toISOString().slice(0, 7); // YYYY-MM
 
-export async function usageThisMonth(db: SupabaseClient): Promise<number> {
-  const { data, error } = await db.from('usage_events').select('units, kind').gte('created_at', monthStart());
-  if (error) throw new HttpError(500, 'Could not read usage');
-  return (data || []).filter((r) => r.kind !== 'extract').reduce((s, r) => s + (r.units || 0), 0);
+export async function usageThisMonth(db: Firestore, uid: string): Promise<number> {
+  const doc = await db.get(`users/${uid}/usage/${monthKey()}`);
+  return Number(doc?.units || 0);
 }
 
 export const monthlyLimit = () => Number(process.env.MONTHLY_GENERATION_LIMIT || 300);

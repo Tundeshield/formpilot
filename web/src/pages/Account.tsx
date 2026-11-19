@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth';
-import { supabase } from '../lib/supabase';
+import { updatePassword } from 'firebase/auth';
+import { collection, deleteDoc, doc, getDocs, setDoc } from 'firebase/firestore';
+import { deleteObject, listAll, ref } from 'firebase/storage';
+import { db, storage } from '../lib/firebase';
+import { friendly } from './Auth';
 import { api } from '../lib/api';
 import { applyTextSize } from '../lib/textsize';
 import { PageHeader } from '../components/Layout';
 
 export function AccountPage() {
-  const { session } = useAuth();
-  const user = session!.user;
+  const { user: u } = useAuth();
+  const user = u!;
   const [usage, setUsage] = useState<{ used: number; limit: number } | null>(null);
   const [usageErr, setUsageErr] = useState('');
   const [size, setSize] = useState(() => applyTextSize());
@@ -17,17 +21,17 @@ export function AccountPage() {
   useEffect(() => { api<{ used: number; limit: number }>('/api/usage').then(setUsage).catch((e) => setUsageErr(e.message)); }, []);
 
   async function changePassword() {
-    const { error } = await supabase.auth.updateUser({ password: pw });
-    setMsg(error ? { ok: false, text: error.message } : { ok: true, text: 'Password updated.' });
-    if (!error) setPw('');
+    try { await updatePassword(user, pw); setMsg({ ok: true, text: 'Password updated.' }); setPw(''); }
+    catch (e) { setMsg({ ok: false, text: friendly(e) }); }
   }
 
   async function deleteData() {
     if (!confirm('Permanently delete your profile and all uploaded documents? This cannot be undone.')) return;
-    const { data: files } = await supabase.storage.from('documents').list(user.id, { limit: 1000 });
-    if (files?.length) await supabase.storage.from('documents').remove(files.map((f) => `${user.id}/${f.name}`));
-    await supabase.from('documents').delete().eq('user_id', user.id);
-    await supabase.from('profiles').update({ data: { contact: { email: user.email } } }).eq('id', user.id);
+    const files = await listAll(ref(storage, `users/${user.uid}/documents`));
+    await Promise.all(files.items.map((f) => deleteObject(f)));
+    const docs = await getDocs(collection(db, 'users', user.uid, 'documents'));
+    await Promise.all(docs.docs.map((d) => deleteDoc(d.ref)));
+    await setDoc(doc(db, 'users', user.uid), { profile: { contact: { email: user.email } } });
     setMsg({ ok: true, text: 'Your profile and documents have been deleted.' });
   }
 

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import type { Session } from '@supabase/supabase-js';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut as fbSignOut, type User } from 'firebase/auth/web-extension';
 import type { DetectedField, FillValue, GenerateResponse, GeneratedAnswer, ScanResult } from '../../src/shared/types';
 import { confidenceLevel } from '../../src/shared/types';
-import { callApi, getAppUrl, getClient, setAppUrl } from './lib/session';
+import { callApi, getAppUrl, getFirebaseAuth, setAppUrl } from './lib/session';
 import { AccessError, activeTabId, fill, requestHostAccess, reveal, scan } from './lib/tab';
 
 type Value = string | string[] | boolean;
@@ -28,17 +28,15 @@ type Phase =
 const LEVEL_LABEL = { high: 'High', medium: 'Review', low: 'Low', missing: 'Needs info' } as const;
 
 export function App() {
-  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [session, setSession] = useState<User | null | undefined>(undefined);
   const [bootError, setBootError] = useState('');
   const [size, setSize] = useState<'normal' | 'large'>('normal');
 
   useEffect(() => {
     chrome.storage.local.get('textSize').then(({ textSize }) => setSize(textSize === 'large' ? 'large' : 'normal'));
     let unsub = () => {};
-    getClient().then(async (sb) => {
-      const { data } = await sb.auth.getSession();
-      setSession(data.session);
-      unsub = sb.auth.onAuthStateChange((_e, s) => setSession(s)).data.subscription.unsubscribe;
+    getFirebaseAuth().then((a) => {
+      unsub = onAuthStateChanged(a, (u) => setSession(u));
     }).catch((e) => { setBootError(e.message); setSession(null); });
     return () => unsub();
   }, []);
@@ -70,12 +68,12 @@ function SignIn({ bootError }: { bootError: string }) {
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError('');
     try {
-      if (server !== (await getAppUrl())) { await setAppUrl(server); await chrome.storage.local.remove('fpConfig'); }
-      const sb = await getClient();
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      location.reload();
-    } catch (err) { setError(err instanceof Error ? err.message : 'Sign-in failed'); }
+      if (server !== (await getAppUrl())) { await setAppUrl(server); location.reload(); return; }
+      await signInWithEmailAndPassword(await getFirebaseAuth(), email, password);
+    } catch (err) {
+      const code = (err as { code?: string })?.code || '';
+      setError(/invalid-credential|wrong-password|user-not-found/.test(code) ? 'Email or password is incorrect.' : err instanceof Error ? err.message.replace(/^Firebase: /, '') : 'Sign-in failed');
+    }
     setBusy(false);
   }
 
@@ -96,7 +94,7 @@ function SignIn({ bootError }: { bootError: string }) {
   );
 }
 
-function Main({ session, size, setSize }: { session: Session; size: 'normal' | 'large'; setSize: (s: 'normal' | 'large') => void }) {
+function Main({ session, size, setSize }: { session: User; size: 'normal' | 'large'; setSize: (s: 'normal' | 'large') => void }) {
   const [phase, setPhase] = useState<Phase>({ k: 'idle' });
   const [page, setPage] = useState<ScanResult | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -197,7 +195,7 @@ function Main({ session, size, setSize }: { session: Session; size: 'normal' | '
     missing: items.filter((x) => x.answer?.status === 'needs_info').length,
   }), [items]);
 
-  async function signOut() { (await getClient()).auth.signOut(); }
+  async function signOut() { await fbSignOut(await getFirebaseAuth()); }
 
   return (
     <div className="page">
@@ -206,7 +204,7 @@ function Main({ session, size, setSize }: { session: Session; size: 'normal' | '
           <button className="btn btn-ghost btn-icon" aria-label="Menu" onClick={() => setMenu(!menu)}>⋯</button>
           {menu && (
             <div className="menu" onMouseLeave={() => setMenu(false)}>
-              <div className="menu-label">{session.user.email}</div>
+              <div className="menu-label">{session.email}</div>
               <a className="menu-item" href={appUrl.current} target="_blank" rel="noreferrer">Edit profile ↗</a>
               <button className="menu-item" onClick={() => setSize(size === 'large' ? 'normal' : 'large')}>Text size: {size === 'large' ? 'Large' : 'Default'}</button>
               {usage && <div className="menu-label">{usage.used} / {usage.limit} AI answers this month</div>}

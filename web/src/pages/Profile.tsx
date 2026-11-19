@@ -11,8 +11,8 @@ const FACT_SUGGESTIONS = [
 ];
 
 export function ProfilePage() {
-  const { session } = useAuth();
-  const uid = session!.user.id;
+  const { user } = useAuth();
+  const uid = user!.uid;
   const [profile, setProfile] = useState<Profile | null>(null);
   const [saved, setSaved] = useState<string>('');
   const [busy, setBusy] = useState(false);

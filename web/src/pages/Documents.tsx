@@ -1,22 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Profile } from '../../../src/shared/types';
 import { useAuth } from '../lib/auth';
-import { supabase } from '../lib/supabase';
+import { collection, deleteDoc, doc, getDocs, orderBy, query, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { db, storage } from '../lib/firebase';
 import { api } from '../lib/api';
 import { extractText } from '../lib/extractText';
 import { loadProfile, mergeProfile, saveProfile } from '../lib/profile';
 import { PageHeader } from '../components/Layout';
 
 interface Doc {
-  id: string; file_name: string; storage_path: string; size_bytes: number; status: string;
-  extracted: Profile | null; error: string | null; created_at: string;
+  id: string; fileName: string; storagePath: string; sizeBytes: number; status: string;
+  extracted: Profile | null; error: string | null; createdAt: string;
 }
 
 const ACCEPT = '.pdf,.docx,.txt,.md';
 
 export function DocumentsPage() {
-  const { session } = useAuth();
-  const uid = session!.user.id;
+  const { user } = useAuth();
+  const uid = user!.uid;
+  const docsCol = collection(db, 'users', uid, 'documents');
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -25,8 +28,10 @@ export function DocumentsPage() {
   const input = useRef<HTMLInputElement>(null);
 
   async function refresh() {
-    const { data, error } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
-    if (error) setError(error.message); else setDocs(data as Doc[]);
+    try {
+      const snap = await getDocs(query(docsCol, orderBy('createdAt', 'desc')));
+      setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Doc));
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not load documents'); }
   }
   useEffect(() => { refresh(); }, []);
 
@@ -35,23 +40,22 @@ export function DocumentsPage() {
     if (file.size > 10 * 1024 * 1024) return setError('Files must be under 10 MB.');
     try {
       setBusy('Uploading…');
-      const path = `${uid}/${Date.now()}-${file.name.replace(/[^\w.\-]+/g, '_')}`;
-      const up = await supabase.storage.from('documents').upload(path, file, { contentType: file.type || undefined });
-      if (up.error) throw up.error;
-      const { data: doc, error } = await supabase.from('documents')
-        .insert({ user_id: uid, file_name: file.name, storage_path: path, mime_type: file.type, size_bytes: file.size })
-        .select().single();
-      if (error) throw error;
+      const path = `users/${uid}/documents/${Date.now()}-${file.name.replace(/[^\w.\-]+/g, '_')}`;
+      await uploadBytes(ref(storage, path), file, { contentType: file.type || 'application/octet-stream' });
+      const docRef = doc(docsCol);
+      const d: Doc = { id: docRef.id, fileName: file.name, storagePath: path, sizeBytes: file.size, status: 'uploaded', extracted: null, error: null, createdAt: new Date().toISOString() };
+      const { id: _id, ...fields } = d;
+      await setDoc(docRef, { ...fields, mimeType: file.type });
       setBusy('Reading document…');
       const text = await extractText(file);
       if (text.length < 40) {
-        await supabase.from('documents').update({ status: 'failed', error: 'No readable text (scanned PDFs are not supported yet).' }).eq('id', doc.id);
+        await updateDoc(docRef, { status: 'failed', error: 'No readable text (scanned PDFs are not supported yet).' });
         throw new Error('This file has no readable text. Scanned/image-only PDFs need OCR, which the MVP does not support yet.');
       }
       setBusy('Extracting your information with AI…');
-      const { extracted } = await api<{ extracted: Profile }>('/api/extract', { documentId: doc.id, text });
+      const { extracted } = await api<{ extracted: Profile }>('/api/extract', { documentId: d.id, text });
       await refresh();
-      setReviewing({ ...(doc as Doc), status: 'extracted', extracted });
+      setReviewing({ ...d, status: 'extracted', extracted });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
       await refresh();
@@ -59,15 +63,15 @@ export function DocumentsPage() {
   }
 
   async function remove(d: Doc) {
-    if (!confirm(`Delete ${d.file_name}? Information already added to your profile stays.`)) return;
-    await supabase.storage.from('documents').remove([d.storage_path]);
-    await supabase.from('documents').delete().eq('id', d.id);
+    if (!confirm(`Delete ${d.fileName}? Information already added to your profile stays.`)) return;
+    await deleteObject(ref(storage, d.storagePath)).catch(() => {});
+    await deleteDoc(doc(docsCol, d.id));
     refresh();
   }
 
   async function open(d: Doc) {
-    const { data } = await supabase.storage.from('documents').createSignedUrl(d.storage_path, 60);
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener');
+    try { window.open(await getDownloadURL(ref(storage, d.storagePath)), '_blank', 'noopener'); }
+    catch { setError('Could not open this file.'); }
   }
 
   if (reviewing?.extracted) return <Review doc={reviewing} uid={uid} onDone={() => { setReviewing(null); refresh(); }} />;
@@ -98,10 +102,10 @@ export function DocumentsPage() {
           <div className="card-body subtle">No documents yet.</div>
         ) : docs.map((d) => (
           <div className="doc-row" key={d.id}>
-            <div className="doc-icon">{d.file_name.split('.').pop()?.toUpperCase().slice(0, 4)}</div>
+            <div className="doc-icon">{d.fileName.split('.').pop()?.toUpperCase().slice(0, 4)}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.file_name}</div>
-              <div className="subtle">{new Date(d.created_at).toLocaleDateString()} · {Math.max(1, Math.round(d.size_bytes / 1024))} KB{d.error ? ` · ${d.error}` : ''}</div>
+              <div style={{ fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.fileName}</div>
+              <div className="subtle">{new Date(d.createdAt).toLocaleDateString()} · {Math.max(1, Math.round(d.sizeBytes / 1024))} KB{d.error ? ` · ${d.error}` : ''}</div>
             </div>
             <span className={`badge ${d.status === 'merged' ? 'badge-high' : d.status === 'failed' ? 'badge-missing' : d.status === 'extracted' ? 'badge-medium' : ''}`}>
               {{ uploaded: 'Uploaded', extracted: 'Ready to review', merged: 'Added to profile', failed: 'Failed' }[d.status] || d.status}
@@ -118,8 +122,8 @@ export function DocumentsPage() {
 
 type Pick = Record<string, boolean>;
 
-function Review({ doc, uid, onDone }: { doc: Doc; uid: string; onDone: () => void }) {
-  const x = doc.extracted!;
+function Review({ doc: docMeta, uid, onDone }: { doc: Doc; uid: string; onDone: () => void }) {
+  const x = docMeta.extracted!;
   const rows: { key: string; group: string; label: string; apply: (p: Profile) => Profile }[] = [];
   const scalar = (group: string, obj: 'personal' | 'contact' | 'links', names: Record<string, string>) => {
     for (const [k, label] of Object.entries(names)) {
@@ -156,7 +160,7 @@ function Review({ doc, uid, onDone }: { doc: Doc; uid: string; onDone: () => voi
       // Scalar picks overwrite (the user explicitly ticked them); list picks are appended without duplicates.
       const next = rows.filter((r) => picked[r.key]).reduce((p, r) => r.apply(p), current);
       await saveProfile(uid, next);
-      await supabase.from('documents').update({ status: 'merged' }).eq('id', doc.id);
+      await updateDoc(doc(db, 'users', uid, 'documents', docMeta.id), { status: 'merged' });
       onDone();
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not save'); setBusy(false); }
   }
@@ -170,7 +174,7 @@ function Review({ doc, uid, onDone }: { doc: Doc; uid: string; onDone: () => voi
 
   return (
     <>
-      <PageHeader title="Review extracted information" subtitle={<>From <strong>{doc.file_name}</strong>. Untick anything that's wrong — nothing is added until you confirm.</>}
+      <PageHeader title="Review extracted information" subtitle={<>From <strong>{docMeta.fileName}</strong>. Untick anything that's wrong — nothing is added until you confirm.</>}
         actions={<><button className="btn btn-ghost" onClick={onDone}>Cancel</button><button className="btn btn-primary" onClick={apply} disabled={busy || !current}>{busy ? <span className="spinner" /> : `Add ${Object.values(picked).filter(Boolean).length} items to profile`}</button></>} />
       {error && <div className="notice notice-error">{error}</div>}
       {rows.length === 0 ? <div className="notice">Nothing could be extracted from this document.</div> : (

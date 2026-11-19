@@ -1,0 +1,28 @@
+rules_version = '2';
+// FormPilot: every user can only ever access data under /users/{their uid}.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(uid) { return request.auth != null && request.auth.uid == uid; }
+
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+
+      match /documents/{docId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Usage counters may only go up and can't be deleted.
+      match /usage/{month} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && request.resource.data.keys().hasOnly(['units', 'extracts']);
+        allow update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly(['units', 'extracts'])
+          && request.resource.data.get('units', 0) >= resource.data.get('units', 0)
+          && request.resource.data.get('extracts', 0) >= resource.data.get('extracts', 0);
+        allow delete: if false;
+      }
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}
