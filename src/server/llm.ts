@@ -50,10 +50,11 @@ const openai: LLM = {
 };
 
 const anthropic: LLM = {
-  async completeJSON({ system, user, temperature = 0.3, maxTokens = 3000 }) {
+  // Current Claude models don't accept `temperature`; regenerate variety comes from the prompt instead.
+  async completeJSON({ system, user, maxTokens = 3000 }) {
     const data = await post('https://api.anthropic.com/v1/messages', { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' }, {
       model: process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5',
-      temperature, max_tokens: maxTokens, system,
+      max_tokens: maxTokens, system,
       messages: [{ role: 'user', content: user + '\n\nRespond with a single JSON object only.' }],
     });
     return parseJSON((data.content || []).map((c: any) => c.text || '').join(''));
