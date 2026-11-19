@@ -44,3 +44,16 @@ describe('buildContext', () => {
     expect(ctx).toEqual({ summary: 'hi' });
   });
 });
+
+describe('briefs', () => {
+  it('sends the user brief to the AI even when the profile has nothing relevant', async () => {
+    const { generateAnswers } = await import('../src/server/generate');
+    let prompt = '';
+    const llm = { completeJSON: async ({ user }: { user: string }) => { prompt = user; return { answers: [{ id: 'fp-1', status: 'answered', value: 'Upgrade of the Yousend booth ahead of the December peak.', confidence: 0.8 }] }; } };
+    const field = { id: 'fp-1', kind: 'textarea' as const, label: 'Description of Expense', required: true, maxLength: 300 };
+    const out = await generateAnswers({}, { page: { url: '', title: '', host: '', pageContext: '' }, fields: [field], regenerate: { brief: 'upgrade the yousend booth for december influx' } }, llm);
+    expect(prompt).toContain('USER_BRIEF');
+    expect(prompt).toContain('upgrade the yousend booth');
+    expect(out.answers[0]).toMatchObject({ status: 'answered' });
+  });
+});

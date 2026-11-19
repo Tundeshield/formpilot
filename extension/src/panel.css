@@ -48,3 +48,8 @@ body { background: var(--bg-subtle); min-width: 300px; }
 .menu-item { display: block; width: 100%; text-align: left; border: 0; background: none; font: inherit; font-size: 0.86rem; padding: 7px 9px; border-radius: 6px; color: var(--text); cursor: pointer; }
 .menu-item:hover { background: var(--bg-muted); text-decoration: none; }
 .menu-label { font-size: 0.76rem; color: var(--text-3); padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; }
+.brief { display: flex; flex-direction: column; gap: 6px; }
+.brief textarea, .tweak textarea { min-height: 0; font-size: 0.86rem; }
+.tweak { display: flex; flex-direction: column; gap: 8px; padding: 9px; border-radius: var(--radius-sm); background: var(--bg-subtle); border: 1px solid var(--border); }
+.counter { font-size: 0.74rem; color: var(--text-3); text-align: right; margin-top: -4px; }
+.counter.over { color: var(--red); font-weight: 600; }

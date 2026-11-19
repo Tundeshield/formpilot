@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut as fbSignOut, type User } from 'firebase/auth/web-extension';
 import type { DetectedField, FillValue, GenerateResponse, GeneratedAnswer, ScanResult } from '../../src/shared/types';
 import { confidenceLevel } from '../../src/shared/types';
-import { callApi, getAppUrl, getFirebaseAuth, setAppUrl } from './lib/session';
+import { callApi, getAppUrl, setAppUrl, signIn, signOut as endSession, watchSession, type Session } from './lib/session';
 import { AccessError, activeTabId, fill, requestHostAccess, reveal, scan } from './lib/tab';
 
 type Value = string | string[] | boolean;
@@ -15,6 +14,8 @@ interface Item {
   editing: boolean;
   saveToProfile: boolean;
   busy?: boolean;
+  brief?: string; // the user's short description, kept so later tweaks build on it
+  error?: string;
   filled?: 'ok' | string; // 'ok' or error message
 }
 
@@ -28,22 +29,17 @@ type Phase =
 const LEVEL_LABEL = { high: 'High', medium: 'Review', low: 'Low', missing: 'Needs info' } as const;
 
 export function App() {
-  const [session, setSession] = useState<User | null | undefined>(undefined);
-  const [bootError, setBootError] = useState('');
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [size, setSize] = useState<'normal' | 'large'>('normal');
 
   useEffect(() => {
     chrome.storage.local.get('textSize').then(({ textSize }) => setSize(textSize === 'large' ? 'large' : 'normal'));
-    let unsub = () => {};
-    getFirebaseAuth().then((a) => {
-      unsub = onAuthStateChanged(a, (u) => setSession(u));
-    }).catch((e) => { setBootError(e.message); setSession(null); });
-    return () => unsub();
+    return watchSession(setSession);
   }, []);
   useEffect(() => { document.documentElement.dataset.text = size; chrome.storage.local.set({ textSize: size }); }, [size]);
 
   if (session === undefined) return <div className="center"><span className="spinner" /></div>;
-  if (!session) return <SignIn bootError={bootError} />;
+  if (!session) return <SignIn />;
   return <Main session={session} size={size} setSize={setSize} />;
 }
 
@@ -56,34 +52,32 @@ function Header({ right }: { right?: React.ReactNode }) {
   );
 }
 
-function SignIn({ bootError }: { bootError: string }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState(bootError);
+function SignIn() {
+  const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [server, setServer] = useState('');
-  const [showServer, setShowServer] = useState(!!bootError);
+  const [showServer, setShowServer] = useState(false);
   useEffect(() => { getAppUrl().then(setServer); }, []);
 
-  async function submit(e: FormEvent) {
+  // Inputs are uncontrolled and read on submit, so values Chrome autofills
+  // (including a picked saved email) are always used.
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setBusy(true); setError('');
+    const data = new FormData(e.currentTarget);
     try {
-      if (server !== (await getAppUrl())) { await setAppUrl(server); location.reload(); return; }
-      await signInWithEmailAndPassword(await getFirebaseAuth(), email, password);
-    } catch (err) {
-      const code = (err as { code?: string })?.code || '';
-      setError(/invalid-credential|wrong-password|user-not-found/.test(code) ? 'Email or password is incorrect.' : err instanceof Error ? err.message.replace(/^Firebase: /, '') : 'Sign-in failed');
-    }
+      if (server && server !== (await getAppUrl())) await setAppUrl(server);
+      await signIn(String(data.get('email') || '').trim(), String(data.get('password') || ''));
+    } catch (err) { setError(err instanceof Error ? err.message : 'Sign-in failed'); }
     setBusy(false);
   }
 
   return (
     <div className="page">
       <Header />
-      <form className="pad stack" onSubmit={submit}>
-        <div><h2>Sign in</h2><p className="subtle">Use your FormPilot account. Your profile powers every answer.</p></div>
-        <label className="field">Email<input className="input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label className="field">Password<input className="input" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+      <form className="pad stack" onSubmit={submit} method="post" action="#" autoComplete="on">
+        <div><h2>Sign in</h2><p className="subtle">Use your FormPilot account. You'll stay signed in until you sign out.</p></div>
+        <label className="field">Email<input className="input" type="email" name="email" id="fp-email" autoComplete="username email" required /></label>
+        <label className="field">Password<input className="input" type="password" name="password" id="fp-password" autoComplete="current-password" required /></label>
         {error && <div className="notice notice-error">{error}</div>}
         <button className="btn btn-primary btn-block" disabled={busy}>{busy ? <span className="spinner" /> : 'Sign in'}</button>
         <p className="subtle center-text">No account? <a href={`${server}/signup`} target="_blank" rel="noreferrer">Create one</a></p>
@@ -94,7 +88,7 @@ function SignIn({ bootError }: { bootError: string }) {
   );
 }
 
-function Main({ session, size, setSize }: { session: User; size: 'normal' | 'large'; setSize: (s: 'normal' | 'large') => void }) {
+function Main({ session, size, setSize }: { session: Session; size: 'normal' | 'large'; setSize: (s: 'normal' | 'large') => void }) {
   const [phase, setPhase] = useState<Phase>({ k: 'idle' });
   const [page, setPage] = useState<ScanResult | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -149,20 +143,22 @@ function Main({ session, size, setSize }: { session: User; size: 'normal' | 'lar
     if (ok) start(); else setPhase({ k: 'error', msg: 'Permission not granted. FormPilot only reads a page when you click Scan.' });
   }
 
-  async function regenerate(it: Item, instruction?: string) {
+  /** Rewrite one field: from a brief, with a tweak instruction, or just a fresh version. */
+  async function regenerate(it: Item, opts: { instruction?: string; brief?: string } = {}) {
     if (!page) return;
-    update(it.field.id, { busy: true });
+    const brief = opts.brief ?? it.brief;
+    update(it.field.id, { busy: true, error: undefined, brief });
     try {
+      const previous = it.answer?.status === 'answered' && typeof it.value === 'string' ? it.value : undefined;
       const res = await callApi<GenerateResponse>('/api/generate', {
         page: pageInfo(page), fields: [it.field],
-        regenerate: { previous: typeof it.value === 'string' ? it.value : undefined, instruction },
+        regenerate: { previous, instruction: opts.instruction, brief },
       });
       setUsage(res.usage);
       const a = res.answers[0];
       update(it.field.id, { busy: false, answer: a, value: a?.value ?? null, approved: false, editing: false });
     } catch (e) {
-      update(it.field.id, { busy: false });
-      setFilledMsg(e instanceof Error ? e.message : 'Could not regenerate');
+      update(it.field.id, { busy: false, error: e instanceof Error ? e.message : 'Could not write this answer' });
     }
   }
 
@@ -195,7 +191,7 @@ function Main({ session, size, setSize }: { session: User; size: 'normal' | 'lar
     missing: items.filter((x) => x.answer?.status === 'needs_info').length,
   }), [items]);
 
-  async function signOut() { await fbSignOut(await getFirebaseAuth()); }
+  async function signOut() { await endSession(); }
 
   return (
     <div className="page">
@@ -268,7 +264,7 @@ function Main({ session, size, setSize }: { session: User; size: 'normal' | 'lar
                   <FieldCard key={it.field.id} it={it}
                     onChange={(p) => update(it.field.id, p)}
                     onReveal={() => tabId !== null && reveal(tabId, it.field.id)}
-                    onRegenerate={(ins) => regenerate(it, ins)} />
+                    onRegenerate={(opts) => regenerate(it, opts)} />
                 ))}
               </div>
             </>
@@ -291,16 +287,26 @@ function Main({ session, size, setSize }: { session: User; size: 'normal' | 'lar
   );
 }
 
+const TWEAKS = ['Shorter', 'More detail', 'More formal', 'Friendlier', 'Bullet points'];
+
 function FieldCard({ it, onChange, onReveal, onRegenerate }: {
-  it: Item; onChange: (p: Partial<Item>) => void; onReveal: () => void; onRegenerate: (instruction?: string) => void;
+  it: Item; onChange: (p: Partial<Item>) => void; onReveal: () => void;
+  onRegenerate: (opts?: { instruction?: string; brief?: string }) => void;
 }) {
   const { field: f, answer: a } = it;
-  const [regenOpen, setRegenOpen] = useState(false);
+  const [tweakOpen, setTweakOpen] = useState(false);
+  const [tweak, setTweak] = useState('');
+  const [brief, setBrief] = useState(it.brief || '');
+  const [typeOwn, setTypeOwn] = useState(false);
   const level = a ? confidenceLevel(a) : null;
   const missing = a?.status === 'needs_info';
   const textual = f.kind === 'text' || f.kind === 'textarea';
+  const decision = a?.method === 'profile' && missing && !textual; // consent / self-ID: the user's call
   const prefilled = hasValue(f.currentValue) && !a;
   const set = (value: Value | null) => onChange({ value, approved: hasValue(value) ? it.approved : false });
+  const writable = textual && !['date', 'number', 'email', 'tel', 'url', 'time', 'month'].includes(f.inputType || '');
+  const showBrief = writable && missing && !hasValue(it.value) && !typeOwn;
+  const canAi = !decision && (textual || f.kind === 'select' || f.kind === 'radio' || f.kind === 'checkbox-group');
 
   return (
     <div className={`fcard ${it.skipped ? 'is-skipped' : ''} ${it.approved && !it.skipped ? 'is-approved' : ''}`}>
@@ -313,28 +319,47 @@ function FieldCard({ it, onChange, onReveal, onRegenerate }: {
 
       {!it.skipped && (
         <>
-          {missing && <p className="reason">{a?.reason}</p>}
+          {missing && <p className="reason">{a?.reason}{showBrief ? ' — describe it briefly and FormPilot will write it up.' : ''}</p>}
           {!missing && a?.reason && level !== 'high' && <p className="subtle small">{a.reason}</p>}
 
-          {it.busy ? <div className="row subtle small"><span className="spinner" /> Regenerating…</div> : (
-            (it.editing || missing || !textual) ? (
-              <Editor field={f} value={it.value} onChange={set} autoFocus={it.editing} />
-            ) : (
-              <p className={`answer ${f.kind === 'textarea' ? 'long' : ''}`} onClick={() => onChange({ editing: true })}>{String(it.value ?? '')}</p>
-            )
+          {it.busy ? <div className="row subtle small"><span className="spinner" /> Writing…</div> : showBrief ? (
+            <div className="brief">
+              <textarea className="input" rows={3} value={brief} onChange={(e) => setBrief(e.target.value)}
+                placeholder={briefPlaceholder(f)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && brief.trim()) onRegenerate({ brief: brief.trim() }); }} />
+              <div className="row between">
+                <button className="btn btn-ghost btn-sm" onClick={() => setTypeOwn(true)}>Type the exact answer instead</button>
+                <button className="btn btn-primary btn-sm" disabled={!brief.trim()} onClick={() => onRegenerate({ brief: brief.trim() })}>Write it</button>
+              </div>
+            </div>
+          ) : (it.editing || missing || !textual) ? (
+            <Editor field={f} value={it.value} onChange={set} autoFocus={it.editing || typeOwn} />
+          ) : (
+            <p className={`answer ${f.kind === 'textarea' ? 'long' : ''}`} onClick={() => onChange({ editing: true })}>{String(it.value ?? '')}</p>
           )}
+
+          {writable && hasValue(it.value) && !it.busy && (f.kind === 'textarea' || f.maxLength || String(it.value).length > 60) && <Counter text={String(it.value)} max={f.maxLength} />}
+          {it.brief && !missing && !it.busy && <p className="subtle small">Written from your note: “{it.brief.length > 80 ? it.brief.slice(0, 80) + '…' : it.brief}”</p>}
 
           {missing && textual && hasValue(it.value) && f.label && (
             <label className="row subtle small"><input type="checkbox" checked={it.saveToProfile} onChange={(e) => onChange({ saveToProfile: e.target.checked })} /> Save this answer to my profile</label>
           )}
+          {it.error && <p className="reason">{it.error}</p>}
           {typeof it.filled === 'string' && it.filled !== 'ok' && <p className="reason">{it.filled}</p>}
 
-          {regenOpen && (
-            <div className="row wrap regen">
-              {['Shorter', 'More detail', 'More formal', 'Different angle'].map((s) => (
-                <button key={s} className="btn btn-sm" onClick={() => { setRegenOpen(false); onRegenerate(s); }}>{s}</button>
-              ))}
-              <button className="btn btn-sm btn-ghost" onClick={() => { setRegenOpen(false); onRegenerate(); }}>Just retry</button>
+          {tweakOpen && (
+            <div className="tweak">
+              <div className="row wrap" style={{ gap: 6 }}>
+                {(writable ? TWEAKS : ['Different option']).map((t) => (
+                  <button key={t} className="btn btn-sm" onClick={() => { setTweakOpen(false); onRegenerate({ instruction: t }); }}>{t}</button>
+                ))}
+              </div>
+              <textarea className="input" rows={2} value={tweak} onChange={(e) => setTweak(e.target.value)}
+                placeholder={writable ? 'Or say what to change — e.g. “mention the budget is $2,000” or “keep it under 300 characters”' : 'Or say what to consider'} />
+              <div className="row between">
+                <button className="btn btn-ghost btn-sm" onClick={() => { setTweakOpen(false); onRegenerate(); }}>Just retry</button>
+                <button className="btn btn-primary btn-sm" disabled={!tweak.trim()} onClick={() => { setTweakOpen(false); onRegenerate({ instruction: tweak.trim() }); setTweak(''); }}>Rewrite</button>
+              </div>
             </div>
           )}
         </>
@@ -346,11 +371,31 @@ function FieldCard({ it, onChange, onReveal, onRegenerate }: {
             {it.approved ? '✓ Approved' : 'Approve'}
           </button>
         )}
-        {!it.skipped && textual && !missing && <button className="btn btn-ghost btn-sm" onClick={() => onChange({ editing: !it.editing })}>{it.editing ? 'Done' : 'Edit'}</button>}
-        {!it.skipped && a && (a.method === 'ai' || missing) && <button className="btn btn-ghost btn-sm" disabled={it.busy} onClick={() => setRegenOpen(!regenOpen)}>Regenerate</button>}
+        {!it.skipped && textual && hasValue(it.value) && !missing && <button className="btn btn-ghost btn-sm" onClick={() => onChange({ editing: !it.editing })}>{it.editing ? 'Done' : 'Edit'}</button>}
+        {!it.skipped && a && canAi && !showBrief && <button className="btn btn-ghost btn-sm" disabled={it.busy} onClick={() => setTweakOpen(!tweakOpen)}>{hasValue(it.value) ? 'Tweak' : 'Write with AI'}</button>}
         <button className="btn btn-ghost btn-sm push" onClick={() => onChange({ skipped: !it.skipped, approved: false })}>{it.skipped ? 'Include' : 'Skip'}</button>
       </div>
     </div>
+  );
+}
+
+function briefPlaceholder(f: DetectedField): string {
+  const l = (f.label || '').toLowerCase();
+  if (/expense|cost|budget|purchase|spend/.test(l)) return 'Briefly describe it — e.g. “upgrade our booth for the December rush, about $2,000” — and FormPilot will write it up properly.';
+  if (/reason|why|justif|purpose/.test(l)) return 'Jot down the reason in your own words — FormPilot will turn it into a clear, well-written answer.';
+  if (f.kind === 'textarea') return 'Describe it in a few words — what it is, why, any key numbers — and FormPilot will write a polished answer.';
+  return 'A few words about what to put here — FormPilot will write it properly.';
+}
+
+function Counter({ text, max }: { text: string; max?: number }) {
+  const chars = text.length;
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const over = max !== undefined && chars > max;
+  return (
+    <p className={`counter ${over ? 'over' : ''}`}>
+      {max ? `${chars.toLocaleString()} / ${max.toLocaleString()} characters` : `${chars.toLocaleString()} character${chars === 1 ? '' : 's'}`} · {words} word{words === 1 ? '' : 's'}
+      {over && ' — too long for this field'}
+    </p>
   );
 }
 

@@ -125,7 +125,8 @@ export interface GeneratedAnswer {
 export interface GenerateRequest {
   page: { url: string; title: string; host: string; pageContext: string };
   fields: DetectedField[];
-  regenerate?: { previous?: string; instruction?: string };
+  /** Rewrite a single field: a fresh version, a tweak instruction, and/or the user's own brief. */
+  regenerate?: { previous?: string; instruction?: string; brief?: string };
 }
 
 export interface GenerateResponse {
