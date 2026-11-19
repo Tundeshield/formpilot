@@ -50,7 +50,7 @@ export function ProfilePage() {
       <PageHeader
         title="Your profile"
         subtitle="This is FormPilot's knowledge base. Answers are only ever drawn from what's here."
-        actions={<Link className="btn" to="/documents">Import from CV</Link>}
+        actions={<Link className="btn" to="/app/documents">Import from CV</Link>}
       />
 
       <div className="card card-body stack" style={{ gap: 10, marginBottom: 32 }}>

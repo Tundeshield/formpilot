@@ -45,7 +45,9 @@ Connect the GitHub repo as a new site. The build settings come from `netlify.tom
 | `OPENAI_API_KEY` | Your key. Server-only: it is never shipped to the browser or the extension |
 | `OPENAI_MODEL` | Optional, default `gpt-4.1-mini` |
 | `LLM_PROVIDER` | Optional: `openai` (default) or `anthropic` (then set `ANTHROPIC_API_KEY`) |
-| `MONTHLY_GENERATION_LIMIT` | Optional, default `300` AI answers per user per month |
+| `STRIPE_SECRET_KEY` | Stripe secret key (mark secret). Without it everyone is on Free |
+| `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY` | Price IDs of the Pro product in Stripe |
+| `VITE_LEGAL_NAME`, `VITE_SUPPORT_EMAIL` | Shown on the landing, Terms and Privacy pages |
 
 Deploy. During the build, the extension is compiled with the site's URL as its backend and zipped into `/formpilot-extension.zip`.
 
@@ -75,5 +77,5 @@ npm test                # 21 tests
 - **Cross-origin iframes** aren't scanned. For example, a Greenhouse form embedded on a company site: open the iframe's URL directly instead.
 - **Scanned or image-only PDFs** have no text layer and would need OCR. PDF, DOCX and TXT files with real text all work.
 - The extension is installed unpacked. A Chrome Web Store listing needs a store account and review.
-- There is no billing. Usage is metered against a monthly limit and shown on the Account page.
+- Plans and limits live in `src/shared/plans.ts` (Free: 30 AI answers / 2 imports; Pro $9/mo or $79/yr: 1,000 / 30). Stripe is the source of truth for subscriptions; the user's Stripe customer id is stored HMAC-signed in Firestore, so no webhook or admin credentials are needed. Turn on the Customer Portal in Stripe for "Manage billing".
 - Email verification is sent at sign-up but isn't required to use the app.

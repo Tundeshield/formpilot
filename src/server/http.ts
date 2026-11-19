@@ -60,4 +60,7 @@ export async function usageThisMonth(db: Firestore, uid: string): Promise<number
   return Number(doc?.units || 0);
 }
 
-export const monthlyLimit = () => Number(process.env.MONTHLY_GENERATION_LIMIT || 300);
+export async function extractsThisMonth(db: Firestore, uid: string): Promise<number> {
+  const doc = await db.get(`users/${uid}/usage/${monthKey()}`);
+  return Number(doc?.extracts || 0);
+}

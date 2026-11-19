@@ -21,12 +21,12 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="app">
       <header className="topbar">
         <div className="topbar-inner">
-          <NavLink to="/" className="logo-link"><Logo /></NavLink>
+          <NavLink to="/app" className="logo-link"><Logo /></NavLink>
           <nav className="nav">
-            <NavLink to="/" end>Profile</NavLink>
-            <NavLink to="/documents">Documents</NavLink>
-            <NavLink to="/extension">Extension</NavLink>
-            <NavLink to="/account">Account</NavLink>
+            <NavLink to="/app" end>Profile</NavLink>
+            <NavLink to="/app/documents">Documents</NavLink>
+            <NavLink to="/app/extension">Extension</NavLink>
+            <NavLink to="/app/account">Account</NavLink>
           </nav>
           <div className="row">
             <span className="subtle hide-sm">{user?.email}</span>

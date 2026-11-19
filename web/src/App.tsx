@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './lib/auth';
 import { configured } from './lib/firebase';
 import { Layout } from './components/Layout';
@@ -7,30 +8,60 @@ import { ProfilePage } from './pages/Profile';
 import { DocumentsPage } from './pages/Documents';
 import { AccountPage } from './pages/Account';
 import { ExtensionPage } from './pages/Extension';
+import { Landing } from './pages/Landing';
+import { PrivacyPage, TermsPage } from './pages/Legal';
 
 export function App() {
-  const { user, loading } = useAuth();
-  if (!configured) return <SetupNeeded />;
-  if (loading) return <div className="center-screen"><span className="spinner" /></div>;
-  if (!user) {
-    return (
-      <Routes>
-        <Route path="/signup" element={<AuthPage mode="signup" />} />
-        <Route path="*" element={<AuthPage mode="login" />} />
-      </Routes>
-    );
-  }
+  return (
+    <Routes>
+      <Route path="/" element={<Landing />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/login" element={<Guest><AuthPage mode="login" /></Guest>} />
+      <Route path="/signup" element={<Guest><AuthPage mode="signup" /></Guest>} />
+      <Route path="/app/*" element={<Protected><AppRoutes /></Protected>} />
+      {/* Old paths from the first release */}
+      <Route path="/documents" element={<Navigate to="/app/documents" replace />} />
+      <Route path="/account" element={<Navigate to="/app/account" replace />} />
+      <Route path="/extension" element={<Navigate to="/app/extension" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+function AppRoutes() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<ProfilePage />} />
-        <Route path="/documents" element={<DocumentsPage />} />
-        <Route path="/extension" element={<ExtensionPage />} />
-        <Route path="/account" element={<AccountPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route index element={<ProfilePage />} />
+        <Route path="documents" element={<DocumentsPage />} />
+        <Route path="extension" element={<ExtensionPage />} />
+        <Route path="account" element={<AccountPage />} />
+        <Route path="*" element={<Navigate to="/app" replace />} />
       </Routes>
     </Layout>
   );
+}
+
+function Protected({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth();
+  const loc = useLocation();
+  if (!configured) return <SetupNeeded />;
+  if (loading) return <div className="center-screen"><span className="spinner" /></div>;
+  if (!user) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
+  return <>{children}</>;
+}
+
+function Guest({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth();
+  const loc = useLocation();
+  if (!configured) return <SetupNeeded />;
+  if (loading) return <div className="center-screen"><span className="spinner" /></div>;
+  if (user) {
+    const next = new URLSearchParams(loc.search).get('next');
+    return <Navigate to={next && next.startsWith('/app') ? next : '/app'} replace />;
+  }
+  return <>{children}</>;
 }
 
 function SetupNeeded() {

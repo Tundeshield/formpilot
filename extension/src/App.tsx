@@ -205,7 +205,8 @@ function Main({ session, size, setSize }: { session: User; size: 'normal' | 'lar
           {menu && (
             <div className="menu" onMouseLeave={() => setMenu(false)}>
               <div className="menu-label">{session.email}</div>
-              <a className="menu-item" href={appUrl.current} target="_blank" rel="noreferrer">Edit profile ↗</a>
+              <a className="menu-item" href={`${appUrl.current}/app`} target="_blank" rel="noreferrer">Edit profile ↗</a>
+              <a className="menu-item" href={`${appUrl.current}/app/account`} target="_blank" rel="noreferrer">Plan & billing ↗</a>
               <button className="menu-item" onClick={() => setSize(size === 'large' ? 'normal' : 'large')}>Text size: {size === 'large' ? 'Large' : 'Default'}</button>
               {usage && <div className="menu-label">{usage.used} / {usage.limit} AI answers this month</div>}
               <button className="menu-item" onClick={signOut}>Sign out</button>
@@ -236,7 +237,9 @@ function Main({ session, size, setSize }: { session: User; size: 'normal' | 'lar
       {phase.k === 'error' && (
         <div className="pad stack">
           <div className="notice notice-error">{phase.msg}</div>
-          <button className="btn btn-block" onClick={start}>Try again</button>
+          {/upgrade/i.test(phase.msg)
+            ? <a className="btn btn-primary btn-block" href={`${appUrl.current}/app/account`} target="_blank" rel="noreferrer">Upgrade to Pro</a>
+            : <button className="btn btn-block" onClick={start}>Try again</button>}
         </div>
       )}
 

@@ -35,7 +35,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     <div className="center-screen">
       <div className="auth-wrap stack" style={{ gap: 22 }}>
         <div>
-          <Logo />
+          <Link to="/" className="logo-link"><Logo /></Link>
           <p className="auth-tag">Your information. Every form. Handled.</p>
         </div>
         <form className="card card-body stack" onSubmit={submit}>
@@ -50,9 +50,10 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
           {info && <div className="notice notice-success">{info}</div>}
           <button className="btn btn-primary btn-block" disabled={busy}>{busy ? <span className="spinner" /> : signup ? 'Create account' : 'Sign in'}</button>
           {!signup && <button type="button" className="btn btn-ghost btn-sm" onClick={reset}>Forgot password?</button>}
+          {signup && <p className="subtle">By creating an account you agree to our <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Policy</Link>.</p>}
         </form>
         <p className="subtle" style={{ textAlign: 'center' }}>
-          {signup ? <>Already have an account? <Link to="/">Sign in</Link></> : <>New to FormPilot? <Link to="/signup">Create an account</Link></>}
+          {signup ? <>Already have an account? <Link to="/login">Sign in</Link></> : <>New to FormPilot? <Link to="/signup">Create an account</Link></>}
         </p>
       </div>
     </div>

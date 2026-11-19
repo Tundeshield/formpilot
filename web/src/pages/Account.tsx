@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { PLANS } from '../../../src/shared/plans';
 import { useAuth } from '../lib/auth';
 import { updatePassword } from 'firebase/auth';
 import { collection, deleteDoc, doc, getDocs, setDoc } from 'firebase/firestore';
@@ -12,13 +14,23 @@ import { PageHeader } from '../components/Layout';
 export function AccountPage() {
   const { user: u } = useAuth();
   const user = u!;
-  const [usage, setUsage] = useState<{ used: number; limit: number } | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [params, setParams] = useSearchParams();
+  const wanted = params.get('plan') === 'month' ? 'month' : params.get('plan') === 'year' ? 'year' : null;
+  const [billingBusy, setBillingBusy] = useState('');
+  const [billingErr, setBillingErr] = useState('');
   const [usageErr, setUsageErr] = useState('');
   const [size, setSize] = useState(() => applyTextSize());
   const [pw, setPw] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  useEffect(() => { api<{ used: number; limit: number }>('/api/usage').then(setUsage).catch((e) => setUsageErr(e.message)); }, []);
+  useEffect(() => { api<Usage>('/api/usage').then(setUsage).catch((e) => setUsageErr(e.message)); }, []);
+
+  async function billing(action: 'checkout' | 'portal', interval?: 'month' | 'year') {
+    setBillingBusy(action + (interval || '')); setBillingErr('');
+    try { const { url } = await api<{ url: string }>(`/api/billing/${action}`, { interval }); window.location.href = url; }
+    catch (e) { setBillingErr(e instanceof Error ? e.message : 'Billing is unavailable right now'); setBillingBusy(''); }
+  }
 
   async function changePassword() {
     try { await updatePassword(user, pw); setMsg({ ok: true, text: 'Password updated.' }); setPw(''); }
@@ -35,20 +47,46 @@ export function AccountPage() {
     setMsg({ ok: true, text: 'Your profile and documents have been deleted.' });
   }
 
-  const pct = usage ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
 
   return (
     <>
       <PageHeader title="Account" />
       <div className="stack" style={{ gap: 20 }}>
+        {params.get('upgraded') && (
+          <div className="notice notice-success row between">
+            <span>Welcome to Pro. Your new limits apply right away (allow up to a minute).</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setParams({})}>Dismiss</button>
+          </div>
+        )}
         <div className="card">
-          <div className="card-head"><h2>Usage this month</h2><span className="badge plain">Free plan</span></div>
-          <div className="card-body stack" style={{ gap: 10 }}>
+          <div className="card-head">
+            <h2>Plan & usage</h2>
+            {usage && <span className={`badge plain ${usage.plan === 'pro' ? 'badge-medium' : ''}`}>{PLANS[usage.plan].name} plan</span>}
+          </div>
+          <div className="card-body stack">
             {usageErr ? <div className="notice notice-error">{usageErr}</div> : !usage ? <span className="spinner" /> : (
               <>
-                <div className="row between"><div className="stat"><strong>{usage.used}</strong><span className="subtle">of {usage.limit} AI-generated answers</span></div></div>
-                <div className="progress"><div style={{ width: `${pct}%` }} /></div>
-                <p className="subtle">Fields filled straight from your profile (name, email…) don't count. Resets on the 1st of each month.</p>
+                <Meter label="AI-written answers" used={usage.used} limit={usage.limit} />
+                <Meter label="Document imports" used={usage.imports} limit={usage.importLimit} />
+                <p className="subtle">Fields filled straight from your profile (name, email, links…) never count. Usage resets on the 1st of each month.</p>
+                {usage.plan === 'pro' ? (
+                  <div className="row between wrap">
+                    <span className="muted">{usage.cancelAt ? `Pro ends on ${new Date(usage.cancelAt * 1000).toLocaleDateString()}.` : usage.renews ? `Renews on ${new Date(usage.renews * 1000).toLocaleDateString()}.` : 'Pro is active.'}</span>
+                    <button className="btn" disabled={!!billingBusy} onClick={() => billing('portal')}>{billingBusy === 'portal' ? <span className="spinner" /> : 'Manage billing'}</button>
+                  </div>
+                ) : usage.billingEnabled ? (
+                  <div className="upgrade">
+                    <div>
+                      <h3>Upgrade to Pro</h3>
+                      <p className="subtle">{PLANS.pro.aiAnswers.toLocaleString()} AI answers and {PLANS.pro.imports} imports a month. Cancel anytime.</p>
+                    </div>
+                    <div className="row wrap">
+                      <button className={`btn ${wanted === 'month' ? 'btn-primary' : ''}`} disabled={!!billingBusy} onClick={() => billing('checkout', 'month')}>{billingBusy === 'checkoutmonth' ? <span className="spinner" /> : `$${PLANS.pro.monthlyUsd} / month`}</button>
+                      <button className={`btn ${wanted !== 'month' ? 'btn-primary' : ''}`} disabled={!!billingBusy} onClick={() => billing('checkout', 'year')}>{billingBusy === 'checkoutyear' ? <span className="spinner" /> : `$${PLANS.pro.yearlyUsd} / year`}</button>
+                    </div>
+                  </div>
+                ) : <p className="subtle">Paid plans are coming soon.</p>}
+                {billingErr && <div className="notice notice-error">{billingErr}</div>}
               </>
             )}
           </div>
@@ -86,5 +124,20 @@ export function AccountPage() {
         {msg && <div className={`notice ${msg.ok ? 'notice-success' : 'notice-error'}`}>{msg.text}</div>}
       </div>
     </>
+  );
+}
+
+interface Usage {
+  plan: 'free' | 'pro'; renews: number | null; cancelAt: number | null;
+  used: number; limit: number; imports: number; importLimit: number; billingEnabled: boolean;
+}
+
+function Meter({ label, used, limit }: { label: string; used: number; limit: number }) {
+  const pct = Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <div className="row between"><span className="muted">{label}</span><span className="subtle"><strong style={{ color: 'var(--text)' }}>{used.toLocaleString()}</strong> of {limit.toLocaleString()}</span></div>
+      <div className="progress"><div style={{ width: `${pct}%`, background: pct >= 90 ? 'var(--red)' : undefined }} /></div>
+    </div>
   );
 }
